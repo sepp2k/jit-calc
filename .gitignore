@@ -1,3 +1,4 @@
 /eval_parse
 /eval_ast
+/stack_vm
 /jit

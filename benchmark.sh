@@ -1,9 +1,10 @@
-#!/bin/zsh
+#!/bin/sh
 
 # Compile
-g++ -O2 -Wall -pedantic eval_parse.cc -o eval_parse
-g++ -O2 -Wall -pedantic eval_ast_virtual.cc -o eval_ast
-g++ -O2 -Wall -pedantic jit.cc -o jit -llightning
+g++ -O2 -Wall -pedantic -DNDEBUG -Wno-return-type eval_parse.cc -o eval_parse
+g++ -O2 -Wall -pedantic -DNDEBUG -Wno-return-type eval_ast.cc -o eval_ast
+g++ -O2 -Wall -pedantic -DNDEBUG -Wno-return-type stack_vm.cc -o stack_vm
+g++ -O2 -Wall -pedantic -DNDEBUG -Wno-return-type jit.cc -o jit -llightning
 
 # Helper definitions
 N=$1
@@ -12,14 +13,18 @@ input() {
     seq 0 $N
 }
 
+run() {
+    echo $2
+    input $1 | time -p ./$2
+    echo
+}
+
 run_bench() {
     echo "==== $1 ===="
-    echo "eval_parse"
-    input $1 | time ./eval_parse
-    echo "eval_ast"
-    input $1 | time ./eval_ast
-    echo "jit"
-    input $1 | time ./jit
+    run $1 eval_parse
+    run $1 eval_ast
+    run $1 stack_vm
+    run $1 jit
     echo
 }
 

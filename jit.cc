@@ -1,8 +1,9 @@
 #include <cassert>
-#include <cctype>
 #include <iostream>
 #include <string>
 #include <vector>
+
+#include "parser.hh"
 
 extern "C" {
     #include <lightning.h>
@@ -12,47 +13,42 @@ static jit_state_t* _jit;
 
 using JittedFunction = int(*)(int);
 
-bool prec_gt(char op1, char op2) {
-    switch (op1) {
-        case '*': case '/':
-        return true;
-
-        case '+': case '-':
-        return op2 == '+' || op2 == '-';
-    }
-    assert(false);
-}
-
-template<typename T> T pop(std::vector<T>& stack) {
-    assert(stack.size() > 0);
-    T value = stack[stack.size() - 1];
-    stack.pop_back();
-    return value;
-}
-
 enum {
     X = -1, TEMP = -2
 };
 
-class Parser {
-    std::vector<char> operators;
+class Jitter {
     // -1: x (R0), -2: temporary, >=0: immediate
     std::vector<int> argument_stack;
     int used_registers = 0;
-
-    char top_op() {
-        return operators[operators.size() - 1];
-    }
-
-    char pop_op() {
-        return pop(operators);
-    }
-
-    void handle_op(char op);
+    const char* argv0;
 
 public:
-    JittedFunction jit(const char* argv0, const std::string& expr);
+    Jitter(const char* argv0) : argv0(argv0) {}
+    void start();
+    void handle_op(char op);
+    void handle_number(int num) {
+        argument_stack.push_back(num);
+    }
+    void handle_x() {
+        argument_stack.push_back(X);
+    }
+    JittedFunction finish();
 };
+
+void Jitter::start() {
+    init_jit(argv0);
+    _jit = jit_new_state();
+    jit_prolog();
+    jit_node_t* in = jit_arg();
+    jit_getarg(JIT_R0, in);
+}
+
+JittedFunction Jitter::finish() {
+    assert(used_registers == 1);
+    jit_retr(JIT_R1);
+    return (JittedFunction) jit_emit();
+}
 
 void jitop_r(char op, int targetr, int lhsr, int rhsr) {
     switch (op) {
@@ -104,7 +100,7 @@ int const_eval(char op, int lhs, int rhs) {
     assert(false);
 }
 
-void Parser::handle_op(char op) {
+void Jitter::handle_op(char op) {
     int rhs = pop(argument_stack);
     int lhs = pop(argument_stack);
     if (lhs == TEMP) {
@@ -147,81 +143,11 @@ void Parser::handle_op(char op) {
     }
 }
 
-JittedFunction Parser::jit(const char* argv0, const std::string& expr) {
-    init_jit(argv0);
-    _jit = jit_new_state();
-    jit_prolog();
-    jit_node_t* in = jit_arg();
-    jit_getarg(JIT_R0, in);
-
-    size_t i = 0;
-    while (i < expr.length()) {
-        char c = expr[i];
-        switch (c) {
-            case '0': case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8': case '9': {
-                int num = c - '0';
-                while (isdigit(c = expr[++i])) {
-                    num *= 10;
-                    num += c - '0';
-                }
-                argument_stack.push_back(num);
-                break;
-            }
-
-            case 'x':
-                argument_stack.push_back(X);
-                c = expr[++i];
-                break;
-
-            case '+': case '-': case '*': case '/': {
-                char op;
-                while (operators.size() != 0 && (op = top_op()) != '(' && prec_gt(op, c)) {
-                    handle_op(op);
-                    operators.pop_back();
-                }
-                operators.push_back(c);
-                c = expr[++i];
-                break;
-            }
-
-            case '(':
-                operators.push_back('(');
-                c = expr[++i];
-                break;
-
-            case ')': {
-                char op = pop_op();
-                while (op != '(') {
-                    handle_op(op);
-                    op = pop_op();
-                }
-                c = expr[++i];
-                break;
-            }
-
-            case ' ': case '\t': case '\r': case '\n':
-                c = expr[++i];
-                break;
-
-            default:
-                std::cerr << "Unexpected character '" << c << "'\n";
-                c = expr[++i];
-                break;
-        }
-    }
-    while (operators.size() > 0) {
-        handle_op(pop_op());
-    }
-    assert(used_registers == 1);
-    jit_retr(JIT_R1);
-    return (JittedFunction) jit_emit();
-}
-
 int main(int argc, char** argv) {
     std::string line;
     std::getline(std::cin, line);
-    Parser parser;
-    JittedFunction f = parser.jit(argv[0], line);
+    JittedFunction f = Parser<Jitter>(argv[0]).parse(line);
+    
     int x;
     unsigned int sum = 0;
     while (std::cin >> x) {
